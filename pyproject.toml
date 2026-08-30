@@ -1,0 +1,86 @@
+
+
+[project]
+name = "baqaro"
+version = "0.1.0"
+description = "Empirical SMBH evolution within N-body simulations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Elia Pizzati", email = "elia.pizzati@gmail.com" }]
+
+# Determined by an AST sweep of every import in the package, not guessed.
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "h5py",
+    "pandas",
+    "astropy",
+    "unyt",
+    "numba",
+    "numexpr",
+    "tqdm",
+    "joblib",
+    "psutil",
+    "george",         # GP emulator kernels
+    "scikit-learn",   # PCA in the emulator
+    "emcee",          # MCMC sampler
+    "corner",         # posterior corner plots
+    "colossus",       # halo concentration / cosmology utilities
+    # Sibling project, public on GitHub. Imported ~160x across every subpackage
+    # (natconst, cosmology.cosmo, clustering.*), so the package does NOT run
+    # without it. Pinned by URL because it is not published on PyPI.
+    "qhtools @ git+https://github.com/eliapizzati/qhtools.git",
+]
+
+[project.optional-dependencies]
+# Corrfunc is only needed by `clustering_direct` (direct pair counting) and is
+# awkward to build on some clusters, so it is not a hard requirement.
+clustering = ["Corrfunc"]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/eliapizzati/baqaro"
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["baqaro*"]
+
+# Data files loaded via os.path.dirname(__file__) at runtime. Without this a
+# wheel install silently omits them and the clustering likelihood / M-sigma
+# loaders fail at first use; only editable installs happened to work.
+[tool.setuptools.package-data]
+"baqaro.obs_data" = [
+    "corr_inputs/*.npz",
+    "data/*.csv", "data/*.dat",
+    "data/**/*.csv", "data/**/*.tsv", "data/**/*.dat",
+]
+
+[tool.pytest.ini_options]
+# Only the `test_*.py` gate files are collected. The `*_test.py` suffix is
+# deliberately NOT in `python_files`: script-style probes such as
+# `tests/diag_*.py` execute their whole body at import, so a suffix match
+# would run plotting / heavy compute during
+# collection (see tests/diag_erdf_eta_distribution.py, which used to pop a
+# matplotlib window on every `pytest` invocation).
+testpaths = ["baqaro/tests"]
+python_files = ["test_*.py"]
+
+# `slow` is deselected by default. The only slow tests today are the
+# `madau_sampler_bias/` layers: a Monte-Carlo investigation drawing 1-2 million
+# sampler columns per test, which collects FIRST (that directory sorts before
+# `test_*.py`) and so used to run for minutes before the first regression gate.
+# Measured: 9 of those tests took 7.5 min, while all 149 gates in the
+# rest of the suite finish in 3m22s. Gates are supposed to be fast and safe to
+# run unattended; that suite is not a gate.
+#   pytest                 -> the 149 gates, ~3 min
+#   pytest -m slow         -> the investigation layers only
+#   pytest -m ""           -> everything
+markers = [
+    "slow: heavy Monte-Carlo investigation, not a regression gate (deselected by default)",
+]
+addopts = "-m 'not slow'"

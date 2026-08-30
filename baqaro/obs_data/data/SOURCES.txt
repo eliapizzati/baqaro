@@ -1,0 +1,21 @@
+Provenance of the tables bundled with obs_data/data (all published data,
+redistributed here for reproducibility; cite the original works).
+
+qlf/all_data_{z}.csv
+    Bolometric quasar luminosity function compilation of Shen et al. (2020),
+    MNRAS 495, 3252, one file per redshift slice (z = 0.2, 1, 2, 3, 4, 5, 6).
+    Columns: Lbol [log10 erg/s], Phi [log10 dex^-1 cMpc^-3], Error_Phi, Error_Lbol.
+
+ARAA_qso_database.csv
+    Database of z > 5.9 quasars from Fan, Banados & Simcoe (2023), ARA&A 61,
+    373 (Table / online material), with MgII-based BH masses and L3000.
+
+m_sigma_m_star/graham_sahu_2023_mmstar.csv
+    Graham & Sahu (2023), MNRAS 518, 2177 -- M_BH vs galaxy stellar mass.
+m_sigma_m_star/sahu_graham_davis_2019_msigma.csv
+    Sahu, Graham & Davis (2019), ApJ 887, 10 -- M_BH vs sigma.
+m_sigma_m_star/reines_volonteri_2015_agn.tsv
+    Reines & Volonteri (2015), ApJ 813, 82 -- VizieR J/ApJ/813/82.
+
+The SDSS DR16Q quasar property catalogue (Wu & Shen 2022, ApJS 263, 42;
+dr16q_prop_May01_2024.fits, ~3.1 GB) is NOT bundled; see qso_obs_data_setup.py.
