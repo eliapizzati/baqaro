@@ -181,3 +181,4 @@ plots/
 logs/
 
 .claude/
+_catalogue_summary.npz

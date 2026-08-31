@@ -278,13 +278,30 @@ def load_emulators(path_out, name_file, flags):
     for key, enabled in flags.items():
         if enabled:
             path = os.path.join(path_out, "emulators", mapping[key])
-            print(f"Loading {key.upper()} emulator from {path}...")
+            # Portable (HDF5) fallbacks: the same emulator as plain arrays,
+            # loadable with numpy + h5py alone (see emulation/portable_emulator.py).
+            # Preferred outright with BAQARO_EMULATOR_FORMAT=portable.
+            portable_candidates = [
+                os.path.join(path_out, "emulators",
+                             mapping[key].replace(".xz", ".hdf5")),
+                os.path.join(path_out, "emulators", f"emulator_{key}.hdf5"),
+            ]
+            prefer_portable = os.environ.get("BAQARO_EMULATOR_FORMAT", "") == "portable"
+            portable = next((c for c in portable_candidates if os.path.exists(c)), None)
             t0 = time.time()
+            if portable is not None and (prefer_portable or not os.path.exists(path)):
+                from baqaro.emulation.portable_emulator import PortableEmulator
+                print(f"Loading {key.upper()} emulator (portable) from {portable}...")
+                emulators[key] = PortableEmulator.load(portable)
+                print(f"Loaded in {time.time()-t0:.2f}s")
+                continue
+            print(f"Loading {key.upper()} emulator from {path}...")
             try:
                 emulators[key] = GeneralEmulatorGP.load(path)
                 print(f"Loaded in {time.time()-t0:.2f}s")
             except FileNotFoundError:
-                print(f"Warning: Emulator file not found: {path}")
+                print(f"Warning: Emulator file not found: {path} "
+                      f"(and no portable .hdf5 beside it)")
                 emulators[key] = None
         else:
             emulators[key] = None

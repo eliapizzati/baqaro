@@ -303,7 +303,9 @@ its whole body, and can block on a matplotlib window. Never name a file
   MCMC chains, and a per-object quasar catalogue at 41 redshifts. Published once
   the paper is accepted, and available on request before then.
   They include a 20-line `numpy` reader for the emulators, so using those needs
-  nothing from this repository.
+  nothing from this repository — and `main_mcmc` itself runs from the same
+  portable files (`emulation/portable_emulator.py`), so re-fitting needs no
+  pickled emulators either.
 
 ## Citation
 
