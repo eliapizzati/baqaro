@@ -4,9 +4,41 @@ PAPER FIGURE: ERDF model visualisation.
 Two figures, selected by the module-level flags below:
 
   * ``erdfs_theory_z``  (``plot_model_redshift``):
-    the model Eddington-ratio distribution — the histogram of log10
-    lambda_Edd over the evolved BH population — at several redshifts,
-    colour-coded by z.
+    Eddington-ratio structure of the evolved BH population with the
+    NON-ACCRETING population included in the accounting (reworked
+    2026-09-01; the old version — per-z conditional PDFs of the accreting
+    subset plus a separate ``erdfs_theory_z_summary`` figure — silently
+    dropped the lambda_Edd = 0 majority and is recoverable via git).
+    Top panel: cumulative occupation fraction F(>lambda_Edd) over all
+    established BHs at 9 redshifts — the gap between each curve's
+    low-lambda plateau and the F=1 line IS the non-accreting population
+    (77% of BHs at z=0). Bottom panel: stacked-area partition of the BH
+    population by activity class (lambda>0.1 / 0<lambda<0.1 /
+    non-accreting) vs redshift, densely sampled.
+
+    Accounting choices (all measured on the K22 fiducial, 2026-09-01):
+      - DENOMINATOR = "established" BHs: alive (M_BH > 0) and past their
+        seeding snapshot. A BH seeded at snapshot i only enters the
+        accretion step at i+1 (``main_evolution.py`` STEP 1 vs STEP 2), so
+        at birth L_bol = 0 BY CONSTRUCTION (f_off|newborn == 1.000
+        exactly). Newborns are 33% of BHs at z=8.7 but <1% at z<1;
+        counting them fakes an activity downturn at z>6.
+      - lambda_Edd = 0 is exact for plateaued (rate==0) halos — the
+        non-accreting default of the forward model.
+      - Snapshot targets avoid ``ANOMALY_SNAPS`` (FLAMINGO round-z
+        inserts): their rate-window lookback differs from neighbours,
+        biasing the zero-rate fraction by 0.03-0.08.
+      - The stacked-band boundaries get a short rolling mean
+        (``BAQARO_ERDF_THEORY_SMOOTH``, default 3; 1 disables) to iron out
+        the residual lookback-quantization jitter between natural snaps.
+
+    The single data pass (~45 snapshots, ~10-15 min on the K22 subsample)
+    is cached per-run at ``{path_out}/erdf_theory/erdf_theory_cache_
+    {name_file}.npz``; ``BAQARO_ERDF_THEORY_RECOMPUTE=1`` rebuilds.
+    NEEDS A RUN WITH ALL SNAPSHOTS STORED (snap i-1 reads identify
+    newborns), i.e. the K22 subsample fiducial — render with
+    ``BAQARO_PAPER_SUBSET_TAG=root144_flatN500000_K22_logM10.0to15.5_seed42_v3``
+    (no notes override; the on-disk K22 run carries no notes token).
 
   * ``erdfs_theory_Mrate``  (``plot_model_halo_rate``):
     the ERDF binned by the cold specific halo accretion rate.  In each rate
@@ -19,20 +51,9 @@ Two figures, selected by the module-level flags below:
     fiducial to a full-sim run with a low ``BAQARO_PAPER_MAX_SNAP`` (see below).
 
 Both read the evolved BH population from the pinned paper fiducial evolution
-HDF5 (via ``fiducial_data``). The redshift ERDF is a marginal PDF over the BH
-population, so on the subsampled fiducial its histogram **and its per-z median**
-apply the Horvitz–Thompson ``loader.weights`` to stay unbiased (a no-op in
-full-sim mode, where ``loader.weights is None``).
-
-Adapted for the paper from the working ERDF-model figure with the
-correctness fixes carried by every paper halo-array reader (cf.
-``plotting_halo_rate.py``):
-  * snapshot rows are indexed ``arr[i]`` — the on-disk layout is
-    ``(n_snapshots, n_halos)`` C-order; the old halo-rate branch used the
-    stale F-order ``arr[:, i]``.
-  * the specific-cold-accretion filename is the canonical ``name_file_halos``
-    (``{simulation_name}_`` prefix + optional ``_foldmass`` /
-    ``_{merger_delay_mode}`` tokens) imported from ``load_data_to_plot``.
+HDF5 (via ``fiducial_data``). All population fractions and histograms apply
+the Horvitz–Thompson ``loader.weights`` to stay unbiased on the subsampled
+fiducial (a no-op in full-sim mode, where ``loader.weights is None``).
 
 Output goes to the git-tracked ``figures_paper/`` via the shared paper config.
 """
@@ -53,11 +74,10 @@ from baqaro.plotting_paper.fiducial_data import (
     path_file,
     path_out,
     max_snap,
+    name_file,
     name_file_halos,
     subset_tag,
     load_simulation_metadata,
-    weighted_median,
-    weighted_percentile,
     snapshot_index_for_redshift,
 )
 
@@ -71,18 +91,112 @@ from baqaro.plotting_common.plot_config import save_fig, maybe_show
 # ------------------------------------------------------------------------------
 name_fig_z = "erdfs_theory_z"
 name_fig_M = "erdfs_theory_Mrate"
-name_fig_z_summary = "erdfs_theory_z_summary"
 
-plot_model_redshift = True    # ERDF of the BH population vs redshift
+plot_model_redshift = True    # occupation-fraction figure (top+bottom panel)
 plot_model_halo_rate = False  # ERDF binned by cold specific halo accretion rate
 
-# log10 lambda_Edd above which a BH counts as "actively accreting".
-# log10(0.1) = -1 -> the active fraction is f(lambda_Edd > 0.1).
-LOG_LAMBDA_ACTIVE = -1.0
+# One cumulative F(>lambda) curve per target redshift (nearest natural snap).
+CURVE_REDSHIFT_TARGETS = [8.7, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.5, 0.0]
 
-# Redshift-driven (sim-independent): for each target z the script picks the
-# nearest snapshot in the loaded sim's z grid.
-REDSHIFT_TARGETS = [8.7, 7.3, 6.0, 5.0, 4.5, 4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0, 0.5, 0.0]
+# Bottom panel: dense sampling — every 3rd natural snapshot below this z.
+Z_DENSE_MAX = 9.2
+
+# FLAMINGO round-z insert snaps + small-dt companions (L2800N10080; root
+# CLAUDE.md "anomaly snaps"). Their accretion-rate window walks back a
+# different number of snapshots than their neighbours', which biases the
+# zero-rate (non-accreting) fraction by 0.03-0.08 — skip them.
+ANOMALY_SNAPS = {59, 65, 71, 72, 79, 82, 91, 100, 108, 116, 123, 133, 138, 139}
+
+# log10 lambda_Edd histogram grid for the cumulative curves (0.05 dex bins).
+BIN_EDGES = np.linspace(-6.0, 1.5, 151)
+
+# Rolling-mean window for the stacked-band boundaries (odd; 1 = no smoothing).
+SMOOTH_WINDOW = max(1, int(os.environ.get("BAQARO_ERDF_THEORY_SMOOTH", "3")))
+RECOMPUTE_CACHE = os.environ.get("BAQARO_ERDF_THEORY_RECOMPUTE", "0") == "1"
+
+
+def _build_erdf_theory_cache(loader, redshifts, snapshots, cache_path):
+    """One pass over the run: per-snapshot activity fractions (dense z grid)
+    + log10 lambda_Edd histograms (curve snaps), HT-weighted, established-BH
+    denominator. Saved as an .npz keyed by the run's name_file."""
+    w = loader.weights
+
+    def natural_snap(tz):
+        i = snapshot_index_for_redshift(redshifts, tz, snapshots, label="erdf_model")
+        if i in ANOMALY_SNAPS:
+            cands = [j for j in (i - 2, i - 1, i + 1, i + 2)
+                     if 1 <= j <= max_snap and j not in ANOMALY_SNAPS]
+            if cands:
+                i = min(cands, key=lambda j: abs(redshifts[j] - tz))
+        return i
+
+    curve_snaps = []
+    for tz in CURVE_REDSHIFT_TARGETS:
+        i = natural_snap(tz)
+        if i >= 1 and i not in curve_snaps:
+            curve_snaps.append(i)
+    dense_snaps = [i for i in range(3, max_snap + 1, 3)
+                   if i not in ANOMALY_SNAPS and redshifts[i] <= Z_DENSE_MAX]
+    all_snaps = sorted(set(dense_snaps) | set(curve_snaps))
+    print(f"[erdf_theory] cache miss -> single pass over {len(all_snaps)} "
+          f"snapshots (curves at {curve_snaps})", flush=True)
+
+    recs = {k: [] for k in ["snap", "z", "n_est", "n_acc", "n001", "n01"]}
+    hist_snaps, hists, unders, overs = [], [], [], []
+
+    for i in all_snaps:
+        print(f"[erdf_theory] snapshot {i}  z={redshifts[i]:.3f}", flush=True)
+        L = loader.get_Lbol(i)
+        M = loader.get_BH_mass(i)
+        try:
+            M_prev = loader.get_BH_mass(i - 1)
+        except Exception as e:
+            raise RuntimeError(
+                f"erdfs_theory_z needs snapshot {i - 1} stored to identify "
+                "newborn BHs (established-BH denominator). Use an "
+                "all-snapshot run — the K22 subsample fiducial: "
+                "BAQARO_PAPER_SUBSET_TAG=root144_flatN500000_K22_"
+                "logM10.0to15.5_seed42_v3") from e
+
+        # Established BHs: alive AND past the seeding snapshot (newborns have
+        # L_bol = 0 by construction, so they never enter the accreting set).
+        est = (M > 0) & (M_prev > 0)
+        acc = est & (L > 0)
+        lam_acc = L[acc] / M[acc] / 10**nc.log_csi
+        w_acc = w[acc] if w is not None else None
+
+        def wsum(mask, wa):
+            return float(np.sum(wa[mask])) if wa is not None else float(np.count_nonzero(mask))
+
+        recs["snap"].append(i)
+        recs["z"].append(float(redshifts[i]))
+        recs["n_est"].append(float(np.sum(w[est])) if w is not None
+                             else float(np.count_nonzero(est)))
+        recs["n_acc"].append(wsum(np.ones(lam_acc.shape, dtype=bool), w_acc)
+                             if lam_acc.size else 0.0)
+        recs["n001"].append(wsum(lam_acc > 0.01, w_acc))
+        recs["n01"].append(wsum(lam_acc > 0.1, w_acc))
+
+        if i in curve_snaps:
+            with np.errstate(divide="ignore"):
+                log_lam = np.log10(lam_acc)
+            hist, _ = np.histogram(log_lam, bins=BIN_EDGES, weights=w_acc)
+            hist_snaps.append(i)
+            hists.append(hist)
+            unders.append(wsum(lam_acc < 10.0**BIN_EDGES[0], w_acc))
+            overs.append(wsum(lam_acc >= 10.0**BIN_EDGES[-1], w_acc))
+        del L, M, M_prev, est, acc, lam_acc, w_acc
+
+    np.savez(
+        cache_path,
+        bin_edges=BIN_EDGES,
+        **{k: np.array(v) for k, v in recs.items()},
+        hist_snaps=np.array(hist_snaps),
+        hist=np.array(hists),
+        under=np.array(unders),
+        over=np.array(overs),
+    )
+    print(f"[erdf_theory] cached -> {cache_path}", flush=True)
 
 
 # ------------------------------------------------------------------------------
@@ -96,143 +210,145 @@ with h5py.File(path_file, "r", rdcc_nbytes=512 * 1024 * 1024, rdcc_nslots=10007)
     erdf = data["erdf"]
 
     # --------------------------------------------------------------------------
-    # FIGURE 1: ERDF of the evolved BH population vs redshift.
+    # FIGURE 1: occupation fraction F(>lambda_Edd) + activity partition vs z.
     # --------------------------------------------------------------------------
     if plot_model_redshift:
-        fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+        cache_dir = os.path.join(path_out, "erdf_theory")
+        cache_path = os.path.join(cache_dir, f"erdf_theory_cache_{name_file}.npz")
+        if RECOMPUTE_CACHE or not os.path.exists(cache_path):
+            os.makedirs(cache_dir, exist_ok=True)
+            _build_erdf_theory_cache(loader, redshifts, snapshots, cache_path)
+        else:
+            print(f"[erdf_theory] using cache {cache_path}")
+        c = np.load(cache_path)
 
-        # Snapshots nearest each target redshift (de-duplicated, in range).
-        snapshots_to_plot = []
-        for _tz in REDSHIFT_TARGETS:
-            _i = snapshot_index_for_redshift(
-                redshifts, _tz, snapshots, label="erdf_model")
-            if _i <= max_snap and _i not in snapshots_to_plot:
-                snapshots_to_plot.append(_i)
-        redshifts_plot = redshifts[snapshots_to_plot]
-        z_lo, z_hi = redshifts_plot.min(), redshifts_plot.max()
+        edges = c["bin_edges"]
+        snap_arr = c["snap"]
+        z_arr = c["z"]
+        n_est = c["n_est"]
+        f_acc = c["n_acc"] / n_est
+        f01 = c["n01"] / n_est
+        hist_snaps = c["hist_snaps"]
+        hist = c["hist"]
+        over = c["over"]
+
+        order = np.argsort(z_arr)  # ascending z for the stacked bands
+        zs, f_accs, f01s = z_arr[order], f_acc[order], f01[order]
+
+        curve_z = np.array([z_arr[snap_arr == s][0] for s in hist_snaps])
+        curve_f_acc = np.array([f_acc[snap_arr == s][0] for s in hist_snaps])
+        z_lo, z_hi = 0.0, curve_z.max()
 
         def _z_color(z):
             return cmap_z((z - z_lo) / (z_hi - z_lo)) if z_hi > z_lo else cmap_z(0.5)
 
-        # Per-redshift quantitative summary of each ERDF: weighted 1sigma
-        # (16/84) and 2sigma (2.3/97.7) percentiles of log10 lambda_Edd, the
-        # weighted median, and the active fraction f(lambda_Edd > 0.1). All
-        # apply the HT loader.weights so they are unbiased on the subsample.
-        summary_rows = []
+        # Per-curve quantitative log (established-BH denominator).
+        print("\nBH activity summary (established BHs, HT-weighted)")
+        header = f"{'z':>6} | {'N_est(w)':>11} | {'f_off':>6} {'f>0.01':>7} {'f>0.1':>6}"
+        print("  " + header)
+        print("  " + "-" * len(header))
+        for s in hist_snaps:
+            k = snap_arr == s
+            print(f"  {z_arr[k][0]:6.2f} | {n_est[k][0]:11.4e} | "
+                  f"{1 - f_acc[k][0]:6.3f} {c['n001'][k][0] / n_est[k][0]:7.3f} "
+                  f"{f01[k][0]:6.3f}")
 
-        for i in snapshots_to_plot:
-            redshift = redshifts[i]
-            print("Working on snapshot", i, f"z={redshift:.2f}", "creating ERDF")
+        X_LO, X_HI = -4.0, 1.4
 
-            Lbols_snapshot = loader.get_Lbol(i)
-            black_hole_masses_snapshot = loader.get_BH_mass(i)
+        fig = plt.figure(figsize=(6, 4.9))
+        gs = fig.add_gridspec(2, 1, height_ratios=[2.4, 0.7], hspace=0.27,
+                              left=0.10, right=0.85, top=0.98, bottom=0.105)
+        ax = fig.add_subplot(gs[0])
+        axb = fig.add_subplot(gs[1])
 
-            with np.errstate(divide="ignore", invalid="ignore"):
-                etas = Lbols_snapshot / black_hole_masses_snapshot / 10**nc.log_csi
-                log_etas = np.log10(etas)
-            finite_mask = np.isfinite(log_etas)
-            # HT inverse-probability weights unbias this marginal-ERDF PDF on the
-            # subsampled fiducial; None in full-sim mode -> identical to unweighted.
-            weights = loader.weights[finite_mask] if loader.weights is not None else None
-            ax.hist(log_etas[finite_mask], bins=100, weights=weights, density=True,
-                    histtype="step", lw=2, log=True, color=_z_color(redshift), ls="-")
+        # ---------------- top panel: cumulative occupation fraction ----------
+        draw = np.argsort(curve_z)[::-1]  # high z first, low z on top
+        for k in draw:
+            n_k = n_est[snap_arr == hist_snaps[k]][0]
+            cum = (np.cumsum(hist[k][::-1])[::-1] + over[k]) / n_k
+            m = edges[:-1] >= X_LO
+            ax.plot(edges[:-1][m], cum[m], lw=2, color=_z_color(curve_z[k]))
+            # left-edge marker at the curve's asymptote = the accreting fraction
+            ax.plot(X_LO, curve_f_acc[k], marker="<", ms=6,
+                    color=_z_color(curve_z[k]), clip_on=False, zorder=5)
 
-            # Dotted vertical at the (weighted) median log lambda_Edd, matching the
-            # per-z median verticals in plotting_halo_rate.py. weighted_median falls
-            # back to the unweighted median when weights is None (full-sim mode).
-            log_etas_finite = log_etas[finite_mask]
-            med = weighted_median(log_etas_finite, weights)
-            ax.axvline(med, color=_z_color(redshift), lw=1.5, ls=":")
+        # reference lines, styled as in the other paper figures: full-height
+        # black dashed at lambda_Edd=1, gray dotted at 0.1; thin line at F=1.
+        ax.axhline(1.0, color="gray", lw=0.9, alpha=0.7, zorder=-10)
+        ax.text(X_HI - 0.08, 0.90, "all BHs", ha="right", va="top", fontsize=10,
+                color="gray")
+        ax.axvline(0.0, color="black", lw=1.5, ls="--", zorder=-10)
+        ax.axvline(-1.0, color="gray", lw=1.2, ls=":", zorder=-10)
 
-            # Quantitative summary: weighted percentiles (2sigma/1sigma/median)
-            # and the weighted active fraction f(lambda_Edd > 0.1).
-            p02 = weighted_percentile(log_etas_finite, weights, 0.0227)
-            p16 = weighted_percentile(log_etas_finite, weights, 0.1587)
-            p84 = weighted_percentile(log_etas_finite, weights, 0.8413)
-            p98 = weighted_percentile(log_etas_finite, weights, 0.9773)
-            active = log_etas_finite > LOG_LAMBDA_ACTIVE
-            if weights is not None:
-                w_tot = float(np.sum(weights))
-                f_active = float(np.sum(weights[active]) / w_tot) if w_tot > 0 else float("nan")
-            else:
-                f_active = float(np.mean(active)) if log_etas_finite.size else float("nan")
-            summary_rows.append(
-                dict(z=redshift, p02=p02, p16=p16, med=med, p84=p84, p98=p98,
-                     f_active=f_active)
-            )
+        ax.set_yscale("log")
+        ax.set_xlim(X_LO, X_HI)
+        ax.set_ylim(1.5e-3, 1.3)
+        ax.set_xlabel(r"$\log_{10}\,\lambda_\mathrm{Edd}$", labelpad=-0.5)
+        ax.set_ylabel(r"$F(>\lambda_\mathrm{Edd})$  (fraction of all BHs)",
+                      labelpad=-0.5)
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
 
-        ax.axvline(np.log10(1.0), color="black", lw=1.5, ls="--", zorder=-10)
-
+        # Redshift colorbar, identical convention to the other paper figures.
         cbar = fig.colorbar(
-            plt.cm.ScalarMappable(cmap=cmap_z, norm=plt.Normalize(vmin=z_lo, vmax=z_hi)),
+            plt.cm.ScalarMappable(cmap=cmap_z,
+                                  norm=plt.Normalize(vmin=z_lo, vmax=z_hi)),
             ax=ax,
         )
         cbar.set_label("Redshift")
         cbar.set_ticks(np.arange(z_lo, z_hi, 0.6))
 
-        ax.set_xlabel(r"Eddington ratio, $\log_{10}\,\lambda_\mathrm{Edd}$", labelpad=-1)
-        ax.set_ylabel(r"Probability distribution")
-        ax.set_xlim(-4, 1.4)
-        ax.set_ylim(1e-4, 8e0)
-        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        # save_fig crops to the ink bbox (bbox_inches="tight"), so extra
+        # breathing room on the right edge needs an invisible glyph past the
+        # colorbar label to stretch the crop box.
+        fig.text(0.87, 0.5, ".", color="white", fontsize=6)
+        fig.text(0.5, 0.03, ".", color="white", fontsize=6)
 
-        fig.subplots_adjust(left=0.15, right=0.95, top=0.95, bottom=0.12)
+        # ---------------- bottom panel: stacked activity partition -----------
+        COL_HI = "#08519c"    # lambda > 0.1
+        COL_MID = "#6baed6"   # 0 < lambda < 0.1
+        COL_OFF = "#cfcfcf"   # lambda = 0 (non-accreting)
+
+        def _smooth(y):
+            # short rolling mean, edge-preserving: irons out the +-0.03-0.08
+            # snapshot-to-snapshot jitter from the discrete accretion-rate
+            # window (lookback quantization) without touching the trend.
+            if SMOOTH_WINDOW <= 1:
+                return y
+            pad = SMOOTH_WINDOW // 2
+            yp = np.concatenate([np.full(pad, y[0]), y, np.full(pad, y[-1])])
+            return np.convolve(yp, np.ones(SMOOTH_WINDOW) / SMOOTH_WINDOW,
+                               mode="valid")
+
+        f01p, f_accp = _smooth(f01s), _smooth(f_accs)
+
+        axb.fill_between(zs, 0, f01p, color=COL_HI, lw=0)
+        axb.fill_between(zs, f01p, f_accp, color=COL_MID, lw=0)
+        axb.fill_between(zs, f_accp, 1, color=COL_OFF, lw=0)
+        for y in (f01p, f_accp):
+            axb.plot(zs, y, color="white", lw=0.9)
+
+        axb.text(3.6, 0.77, r"non-accreting ($\lambda_\mathrm{Edd}=0$)",
+                 ha="center", va="center", fontsize=11, color="0.25")
+        axb.text(6.5, 0.575, r"$0<\lambda_\mathrm{Edd}<0.1$",
+                 ha="center", va="center", fontsize=10, color="white")
+        axb.text(6.8, 0.17, r"$\lambda_\mathrm{Edd}>0.1$",
+                 ha="center", va="center", fontsize=11, color="white")
+
+        # tie-in markers: the redshifts of the curves in the top panel
+        for zv in curve_z:
+            axb.plot(zv, 1.0, marker="v", ms=4.5, color=_z_color(zv),
+                     clip_on=False, zorder=5)
+
+        axb.set_xlim(0, 8.75)
+        axb.set_ylim(0, 1)
+        axb.set_xlabel("Redshift", labelpad=-0.5)
+        axb.set_ylabel("Fraction of BHs", labelpad=0)
+        axb.set_yticks([0, 0.5, 1.0])
+        axb.set_yticklabels(["0", "0.5", "1"])
+        axb.yaxis.set_minor_locator(AutoMinorLocator(2))
+        axb.xaxis.set_minor_locator(AutoMinorLocator())
 
         save_fig(fig, plot_config.FIGURES_DIR, name_fig_z, force_dir=True)
-
-        # ----------------------------------------------------------------------
-        # Quantitative summary: print a per-redshift table of the ERDF
-        # percentiles + active fraction, then a companion vs-z figure.
-        # ----------------------------------------------------------------------
-        # Sort high-z -> low-z for readability (snapshots_to_plot already is).
-        print("\nERDF quantitative summary (log10 lambda_Edd, weighted)")
-        print("  active fraction = f(lambda_Edd > 0.1)  [log10 lambda_Edd > -1]")
-        header = (f"{'z':>6} | {'-2sig':>7} {'-1sig':>7} {'median':>7} "
-                  f"{'+1sig':>7} {'+2sig':>7} | {'f_active':>8}")
-        print("  " + header)
-        print("  " + "-" * len(header))
-        for r in summary_rows:
-            print(f"  {r['z']:6.2f} | {r['p02']:7.2f} {r['p16']:7.2f} {r['med']:7.2f} "
-                  f"{r['p84']:7.2f} {r['p98']:7.2f} | {r['f_active']:8.3f}")
-
-        z_arr = np.array([r["z"] for r in summary_rows])
-        med_arr = np.array([r["med"] for r in summary_rows])
-        p16_arr = np.array([r["p16"] for r in summary_rows])
-        p84_arr = np.array([r["p84"] for r in summary_rows])
-        p02_arr = np.array([r["p02"] for r in summary_rows])
-        p98_arr = np.array([r["p98"] for r in summary_rows])
-        f_active_arr = np.array([r["f_active"] for r in summary_rows])
-
-        fig2, (axA, axB) = plt.subplots(
-            2, 1, figsize=(6, 6.5), sharex=True,
-            gridspec_kw=dict(height_ratios=[2, 1]),
-        )
-
-        # Top: median log lambda_Edd with 1sigma + 2sigma percentile bands.
-        axA.fill_between(z_arr, p02_arr, p98_arr, color="C0", alpha=0.18,
-                         lw=0, label=r"$2\sigma$ (2.3-97.7%)")
-        axA.fill_between(z_arr, p16_arr, p84_arr, color="C0", alpha=0.35,
-                         lw=0, label=r"$1\sigma$ (16-84%)")
-        axA.plot(z_arr, med_arr, color="C0", lw=2, marker="o", ms=4,
-                 label="median")
-        axA.axhline(LOG_LAMBDA_ACTIVE, color="gray", lw=1.2, ls=":",
-                    zorder=-10, label=r"$\lambda_\mathrm{Edd}=0.1$")
-        axA.axhline(0.0, color="black", lw=1.2, ls="--", zorder=-10)
-        axA.set_ylabel(r"$\log_{10}\,\lambda_\mathrm{Edd}$")
-        axA.legend(loc="best", fontsize=8, ncol=2)
-        axA.yaxis.set_minor_locator(AutoMinorLocator())
-
-        # Bottom: active fraction f(lambda_Edd > 0.1) vs z.
-        axB.plot(z_arr, f_active_arr, color="C3", lw=2, marker="s", ms=4)
-        axB.set_ylabel(r"$f(\lambda_\mathrm{Edd}>0.1)$")
-        axB.set_xlabel("Redshift")
-        axB.set_ylim(0, 1)
-        axB.yaxis.set_minor_locator(AutoMinorLocator())
-        axB.xaxis.set_minor_locator(AutoMinorLocator())
-
-        fig2.subplots_adjust(left=0.13, right=0.96, top=0.97, bottom=0.1, hspace=0.07)
-
-        save_fig(fig2, plot_config.FIGURES_DIR, name_fig_z_summary, force_dir=True)
 
     # --------------------------------------------------------------------------
     # FIGURE 2: ERDF binned by the cold specific halo accretion rate.
