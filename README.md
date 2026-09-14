@@ -116,7 +116,7 @@ pip install -e '.[test]'         # + pytest
 Python ≥ 3.10. Dependencies are declared in `pyproject.toml` under PEP 621
 `[project]`; `setup.py` is a compatibility shim. One dependency is not on PyPI
 and is pinned by URL: [`qhtools`](https://github.com/eliapizzati/qhtools),
-which supplies the physical constants, cosmology and clustering utilities used
+which supplies the physical constants, cosmology, and clustering utilities used
 throughout.
 
 ## Layout
@@ -178,7 +178,7 @@ $BAQARO_DATA_DIR/HBT_runs_FLAMINGO/L2800N10080/
 snapshot number.
 
 **The lookup table.** The accretion engine draws sums of lognormals from a
-precomputed inverse-CDF table (~764 MB, far too large for git). Build it once;
+precomputed inverse-CDF table. Build it once;
 it is pure computation and needs no external input:
 
 ```bash
