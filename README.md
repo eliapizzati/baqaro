@@ -42,9 +42,14 @@ the population grows far more steadily.
   <sub>
     A walkthrough of the model with the six parameters on sliders and the
     emulator running live in the browser. Nothing to install, and the quickest
-    way to see what the model actually does. Paper and data products:
+    way to see what the model actually does. Data products:
     see <a href="#links">Links</a>.
   </sub>
+</p>
+
+<p align="center">
+  <b>Read the paper:
+  <a href="https://arxiv.org/abs/2609.12061">arXiv:2609.12061</a></b>
 </p>
 
 > [!IMPORTANT]
@@ -189,8 +194,7 @@ under the output path, and skips the build if the file is already there.
 python -m baqaro.core_functions.halo_mass_histories_saver
 ```
 
-**Then the forward model, by one of two routes.** They are different jobs, and
-the difference is not a detail:
+**Then the forward model, by one of two routes:**
 
 ```bash
 # (a) subsampled, one node: reproduces the summary statistics
@@ -297,8 +301,9 @@ its whole body, and can block on a matplotlib window. Never name a file
 
 - **Website**: <https://eliapizzati.github.io/baqaro.html>, a walkthrough of the
   model with the emulator running live in the browser. Start here.
-- **Paper**: *BAQARO: Tracing Stochastic Black Hole Growth Histories and
-  Quasar Lightcurves in a Cosmological Context*, Pizzati, Hennawi & Schaye.
+- **Paper**: <https://arxiv.org/abs/2609.12061>, *BAQARO: Tracing Stochastic
+  Black Hole Growth Histories and Quasar Lightcurves in a Cosmological
+  Context*, Pizzati, Hennawi & Schaye, submitted to MNRAS.
 - **Data products** *(coming soon)*: summary statistics, portable emulators,
   MCMC chains, and a per-object quasar catalogue at 41 redshifts. Published once
   the paper is accepted, and available on request before then.
@@ -313,15 +318,20 @@ If you use BAQARO, please cite the model paper:
 
 > Pizzati, E., Hennawi, J. F., & Schaye, J. (2026),
 > *BAQARO: Tracing Stochastic Black Hole Growth Histories and Quasar
-> Lightcurves in a Cosmological Context*, MNRAS submitted.
+> Lightcurves in a Cosmological Context*, submitted to MNRAS,
+> [arXiv:2609.12061](https://arxiv.org/abs/2609.12061).
 
 ```bibtex
 @article{baqaro2026,
-  author  = {Pizzati, Elia and Hennawi, Joseph F. and Schaye, Joop},
-  title   = {{BAQARO}: Tracing Stochastic Black Hole Growth Histories and
-             Quasar Lightcurves in a Cosmological Context},
-  journal = {Monthly Notices of the Royal Astronomical Society},
-  year    = {2026}
+  author        = {Pizzati, Elia and Hennawi, Joseph F. and Schaye, Joop},
+  title         = {{BAQARO}: Tracing Stochastic Black Hole Growth Histories and
+                   Quasar Lightcurves in a Cosmological Context},
+  journal       = {arXiv e-prints},
+  year          = {2026},
+  eprint        = {2609.12061},
+  archivePrefix = {arXiv},
+  primaryClass  = {astro-ph.GA},
+  doi           = {10.48550/arXiv.2609.12061}
 }
 ```
 
